@@ -60,6 +60,11 @@ impl Position {
             y: y + self.y,
         }
     }
+
+    #[inline]
+    pub const fn distance(self, to: Self) -> Size {
+        Size::new(self.x.abs_diff(to.x), self.y.abs_diff(to.y))
+    }
 }
 
 impl Add for Position {

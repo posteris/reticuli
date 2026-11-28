@@ -1,4 +1,6 @@
-pub mod encoder;
+pub mod digits;
 pub mod platform;
-pub mod state;
+pub mod sequence;
+pub mod shortest;
 pub mod terminal;
+pub mod writer;

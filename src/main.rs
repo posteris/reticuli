@@ -1,12 +1,16 @@
-use reticuli::rendering::{ansi::terminal::Terminal, renderer::Renderer};
+use reticuli::{diagnostics::profiler::Profiler, rendering::ansi::terminal::Terminal};
 use std::io::Result;
 
 fn main() -> Result<()> {
-    let duration = {
-        let mut terminal = Terminal::new()?;
-        terminal.bench(10_000)?
-    };
+    let mut profiler = Profiler::default();
+    let mut terminal = Terminal::new()?;
+    profiler.bench(&mut terminal, 1_000)?;
+    drop(terminal);
 
-    println!("render: {}us", duration.as_micros());
+    println!("Reticuli");
+    for average in profiler.averages() {
+        println!("{}: {}us", average.0, average.1.as_micros());
+    }
+
     Ok(())
 }

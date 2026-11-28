@@ -1,5 +1,5 @@
-use crate::rendering::frame::Frame;
+use crate::rendering::canvas::Canvas;
 
 pub trait Painter {
-    fn paint(&mut self, frame: &mut Frame);
+    fn paint(&mut self, canvas: &mut Canvas);
 }

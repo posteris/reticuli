@@ -1,9 +1,9 @@
 use crate::common::{bitset::Bitset, cell::Cell, position::Position, size::Size};
 
-pub struct Frame {
+pub struct Canvas {
     size: Size,
     cells: Vec<Cell>,
-    dirty: Bitset,
+    delta: Bitset,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
@@ -29,7 +29,7 @@ impl Delta {
     }
 }
 
-impl Frame {
+impl Canvas {
     #[inline]
     pub fn new(size: Size) -> Self {
         let area = size.area() as usize;
@@ -37,7 +37,7 @@ impl Frame {
         Self {
             size,
             cells: vec![Cell::EMPTY; area],
-            dirty: Bitset::new(area),
+            delta: Bitset::new(area),
         }
     }
 
@@ -52,7 +52,7 @@ impl Frame {
         self.cells.clear();
         self.cells.resize(area, Cell::EMPTY);
         self.size = new_size;
-        self.dirty = Bitset::new(area);
+        self.delta = Bitset::new(area);
     }
 
     #[inline]
@@ -67,7 +67,7 @@ impl Frame {
 
     #[inline]
     pub fn cells_mut(&mut self) -> &mut [Cell] {
-        self.dirty.set_all();
+        self.delta.set_all();
         &mut self.cells
     }
 
@@ -80,7 +80,7 @@ impl Frame {
     pub fn rows_mut(&mut self) -> impl ExactSizeIterator<Item = &mut [Cell]> {
         let width = self.width();
 
-        self.dirty.set_all();
+        self.delta.set_all();
         self.cells.chunks_exact_mut(width)
     }
 
@@ -95,7 +95,7 @@ impl Frame {
         let width = self.width();
         let height = self.size.height();
 
-        self.dirty.set_all();
+        self.delta.set_all();
         (0..height).zip(self.cells.chunks_exact_mut(width))
     }
 
@@ -116,7 +116,7 @@ impl Frame {
         let width = self.width();
         let start = y as usize * width;
 
-        self.dirty.set_range(start, start + width);
+        self.delta.set_range(start, start + width);
         self.cells.get_mut(start..start + width)
     }
 
@@ -133,7 +133,7 @@ impl Frame {
 
         let index = position.y() as usize * self.width() + position.x() as usize;
 
-        self.dirty.set_bit(index);
+        self.delta.set_bit(index);
         self.cells.get_mut(index)
     }
 
@@ -150,7 +150,7 @@ impl Frame {
         }
 
         self.cells[index] = cell;
-        self.dirty.set_bit(index);
+        self.delta.set_bit(index);
     }
 
     #[inline]
@@ -168,7 +168,7 @@ impl Frame {
         {
             if *existing != cell {
                 *existing = cell;
-                self.dirty.set_bit(row_start + x);
+                self.delta.set_bit(row_start + x);
             }
         }
     }
@@ -194,7 +194,7 @@ impl Frame {
 
             if self.cells[index] != cell {
                 self.cells[index] = cell;
-                self.dirty.set_bit(index);
+                self.delta.set_bit(index);
             }
         }
     }
@@ -210,7 +210,7 @@ impl Frame {
             for index in row_start..row_start + width {
                 if self.cells[index] != fill {
                     self.cells[index] = fill;
-                    self.dirty.set_bit(index);
+                    self.delta.set_bit(index);
                 }
             }
         }
@@ -235,20 +235,20 @@ impl Frame {
 
                 if self.cells[index] != cell {
                     self.cells[index] = cell;
-                    self.dirty.set_bit(index);
+                    self.delta.set_bit(index);
                 }
             }
         }
     }
 
     #[inline]
-    pub fn dirty(&self) -> impl Iterator<Item = Delta> + '_ {
+    pub fn delta(&self) -> impl Iterator<Item = Delta> + '_ {
         let width = self.width();
 
         (0..self.size.height()).flat_map(move |y| {
             let row_start = y as usize * width;
 
-            self.dirty
+            self.delta
                 .iter_ones_range(row_start, row_start + width)
                 .map(move |index| {
                     Delta::new(
@@ -260,8 +260,8 @@ impl Frame {
     }
 
     #[inline]
-    pub fn clear_dirty(&mut self) {
-        self.dirty.clear_all();
+    pub fn clear_delta(&mut self) {
+        self.delta.clear_all();
     }
 
     #[inline]
@@ -278,11 +278,11 @@ mod tests {
     const A: Cell = Cell::new(Color::BLACK, Color::BLACK, b'a');
 
     fn size(width: u16, height: u16) -> Size {
-        Size::try_new(width, height).unwrap()
+        Size::new(width, height)
     }
 
-    fn positions(frame: &Frame) -> Vec<Position> {
-        frame.dirty().map(|delta| delta.position()).collect()
+    fn positions(canvas: &Canvas) -> Vec<Position> {
+        canvas.delta().map(|delta| delta.position()).collect()
     }
 
     fn all_positions(width: u16, height: u16) -> Vec<Position> {
@@ -292,79 +292,79 @@ mod tests {
     }
 
     #[test]
-    fn new_frame_has_no_damage() {
-        let frame = Frame::new(size(4, 3));
+    fn new_canvas_has_no_damage() {
+        let canvas = Canvas::new(size(4, 3));
 
-        assert_eq!(frame.dirty().count(), 0);
+        assert_eq!(canvas.delta().count(), 0);
     }
 
     #[test]
     fn set_marks_only_the_changed_cell() {
-        let mut frame = Frame::new(size(4, 3));
+        let mut canvas = Canvas::new(size(4, 3));
 
-        frame.set(Position::new(1, 1), A);
+        canvas.set(Position::new(1, 1), A);
 
-        assert_eq!(positions(&frame), [Position::new(1, 1)]);
+        assert_eq!(positions(&canvas), [Position::new(1, 1)]);
     }
 
     #[test]
     fn setting_the_same_cell_marks_nothing() {
-        let mut frame = Frame::new(size(4, 3));
-        frame.set(Position::new(1, 1), A);
-        frame.clear_dirty();
+        let mut canvas = Canvas::new(size(4, 3));
+        canvas.set(Position::new(1, 1), A);
+        canvas.clear_delta();
 
-        frame.set(Position::new(1, 1), A);
+        canvas.set(Position::new(1, 1), A);
 
-        assert_eq!(frame.dirty().count(), 0);
+        assert_eq!(canvas.delta().count(), 0);
     }
 
     #[test]
     fn set_out_of_bounds_is_ignored() {
-        let mut frame = Frame::new(size(4, 3));
+        let mut canvas = Canvas::new(size(4, 3));
 
-        frame.set(Position::new(4, 0), A);
-        frame.set(Position::new(0, 3), A);
+        canvas.set(Position::new(4, 0), A);
+        canvas.set(Position::new(0, 3), A);
 
-        assert_eq!(frame.dirty().count(), 0);
+        assert_eq!(canvas.delta().count(), 0);
     }
 
     #[test]
     fn fill_marks_every_changed_cell() {
-        let mut frame = Frame::new(size(3, 2));
+        let mut canvas = Canvas::new(size(3, 2));
 
-        frame.fill(A);
+        canvas.fill(A);
 
-        assert_eq!(positions(&frame), all_positions(3, 2));
+        assert_eq!(positions(&canvas), all_positions(3, 2));
     }
 
     #[test]
     fn filling_with_the_same_value_marks_nothing() {
-        let mut frame = Frame::new(size(3, 2));
+        let mut canvas = Canvas::new(size(3, 2));
 
-        frame.fill(Cell::EMPTY);
+        canvas.fill(Cell::EMPTY);
 
-        assert_eq!(frame.dirty().count(), 0);
+        assert_eq!(canvas.delta().count(), 0);
     }
 
     #[test]
     fn clear_marks_only_the_changed_cells() {
-        let mut frame = Frame::new(size(3, 2));
-        frame.fill(A);
-        frame.clear_dirty();
+        let mut canvas = Canvas::new(size(3, 2));
+        canvas.fill(A);
+        canvas.clear_delta();
 
-        frame.clear();
+        canvas.clear();
 
-        assert_eq!(positions(&frame), all_positions(3, 2));
+        assert_eq!(positions(&canvas), all_positions(3, 2));
     }
 
     #[test]
     fn fill_row_marks_only_that_row() {
-        let mut frame = Frame::new(size(3, 2));
+        let mut canvas = Canvas::new(size(3, 2));
 
-        frame.fill_row(1, A);
+        canvas.fill_row(1, A);
 
         assert_eq!(
-            positions(&frame),
+            positions(&canvas),
             [
                 Position::new(0, 1),
                 Position::new(1, 1),
@@ -375,47 +375,47 @@ mod tests {
 
     #[test]
     fn fill_span_marks_only_the_span() {
-        let mut frame = Frame::new(size(4, 2));
+        let mut canvas = Canvas::new(size(4, 2));
 
-        frame.fill_span(0, 1, 3, A);
+        canvas.fill_span(0, 1, 3, A);
 
         assert_eq!(
-            positions(&frame),
+            positions(&canvas),
             [Position::new(1, 0), Position::new(2, 0)]
         );
     }
 
     #[test]
     fn fill_span_clamps_to_the_row() {
-        let mut frame = Frame::new(size(4, 2));
+        let mut canvas = Canvas::new(size(4, 2));
 
-        frame.fill_span(0, 3, 100, A);
+        canvas.fill_span(0, 3, 100, A);
 
-        assert_eq!(positions(&frame), [Position::new(3, 0)]);
+        assert_eq!(positions(&canvas), [Position::new(3, 0)]);
     }
 
     #[test]
     fn fill_with_marks_only_changed_cells() {
-        let mut frame = Frame::new(size(2, 2));
+        let mut canvas = Canvas::new(size(2, 2));
 
-        frame.fill_with(|position| if position.x() == 0 { A } else { Cell::EMPTY });
+        canvas.fill_with(|position| if position.x() == 0 { A } else { Cell::EMPTY });
 
         assert_eq!(
-            positions(&frame),
+            positions(&canvas),
             [Position::new(0, 0), Position::new(0, 1)]
         );
     }
 
     #[test]
-    fn dirty_is_row_major() {
-        let mut frame = Frame::new(size(3, 2));
+    fn delta_is_row_major() {
+        let mut canvas = Canvas::new(size(3, 2));
 
-        frame.set(Position::new(2, 1), A);
-        frame.set(Position::new(0, 0), A);
-        frame.set(Position::new(1, 1), A);
+        canvas.set(Position::new(2, 1), A);
+        canvas.set(Position::new(0, 0), A);
+        canvas.set(Position::new(1, 1), A);
 
         assert_eq!(
-            positions(&frame),
+            positions(&canvas),
             [
                 Position::new(0, 0),
                 Position::new(1, 1),
@@ -425,11 +425,11 @@ mod tests {
     }
 
     #[test]
-    fn dirty_reports_the_current_cell() {
-        let mut frame = Frame::new(size(2, 1));
-        frame.set(Position::new(0, 0), A);
+    fn delta_reports_the_current_cell() {
+        let mut canvas = Canvas::new(size(2, 1));
+        canvas.set(Position::new(0, 0), A);
 
-        let deltas: Vec<_> = frame.dirty().collect();
+        let deltas: Vec<_> = canvas.delta().collect();
 
         assert_eq!(deltas.len(), 1);
         assert_eq!(deltas[0].position(), Position::new(0, 0));
@@ -438,16 +438,16 @@ mod tests {
 
     #[test]
     fn a_two_by_two_painter_emits_four_cells() {
-        let mut frame = Frame::new(size(4, 4));
+        let mut canvas = Canvas::new(size(4, 4));
 
         for y in 1..3 {
             for x in 1..3 {
-                frame.set(Position::new(x, y), A);
+                canvas.set(Position::new(x, y), A);
             }
         }
 
         assert_eq!(
-            positions(&frame),
+            positions(&canvas),
             [
                 Position::new(1, 1),
                 Position::new(2, 1),
@@ -458,44 +458,44 @@ mod tests {
     }
 
     #[test]
-    fn clear_dirty_resets_tracking() {
-        let mut frame = Frame::new(size(3, 2));
-        frame.fill(A);
+    fn clear_delta_resets_tracking() {
+        let mut canvas = Canvas::new(size(3, 2));
+        canvas.fill(A);
 
-        frame.clear_dirty();
+        canvas.clear_delta();
 
-        assert_eq!(frame.dirty().count(), 0);
+        assert_eq!(canvas.delta().count(), 0);
     }
 
     #[test]
-    fn resize_blanks_the_frame_and_drops_damage() {
-        let mut frame = Frame::new(size(2, 2));
-        frame.fill(A);
+    fn resize_blanks_the_canvas_and_drops_damage() {
+        let mut canvas = Canvas::new(size(2, 2));
+        canvas.fill(A);
 
-        frame.resize(size(4, 3));
+        canvas.resize(size(4, 3));
 
-        assert_eq!(frame.size(), size(4, 3));
-        assert_eq!(frame.dirty().count(), 0);
-        assert!(frame.cells().iter().all(|&cell| cell == Cell::EMPTY));
+        assert_eq!(canvas.size(), size(4, 3));
+        assert_eq!(canvas.delta().count(), 0);
+        assert!(canvas.cells().iter().all(|&cell| cell == Cell::EMPTY));
     }
 
     #[test]
     fn get_mut_marks_its_cell() {
-        let mut frame = Frame::new(size(3, 3));
+        let mut canvas = Canvas::new(size(3, 3));
 
-        let _ = frame.get_mut(Position::new(1, 2));
+        let _ = canvas.get_mut(Position::new(1, 2));
 
-        assert_eq!(positions(&frame), [Position::new(1, 2)]);
+        assert_eq!(positions(&canvas), [Position::new(1, 2)]);
     }
 
     #[test]
     fn row_mut_marks_its_row() {
-        let mut frame = Frame::new(size(3, 3));
+        let mut canvas = Canvas::new(size(3, 3));
 
-        let _ = frame.row_mut(1);
+        let _ = canvas.row_mut(1);
 
         assert_eq!(
-            positions(&frame),
+            positions(&canvas),
             [
                 Position::new(0, 1),
                 Position::new(1, 1),
@@ -506,19 +506,19 @@ mod tests {
 
     #[test]
     fn cells_mut_marks_every_cell() {
-        let mut frame = Frame::new(size(3, 2));
+        let mut canvas = Canvas::new(size(3, 2));
 
-        let _ = frame.cells_mut();
+        let _ = canvas.cells_mut();
 
-        assert_eq!(frame.dirty().count(), 6);
+        assert_eq!(canvas.delta().count(), 6);
     }
 
     #[test]
     fn rows_mut_marks_every_cell() {
-        let mut frame = Frame::new(size(3, 2));
+        let mut canvas = Canvas::new(size(3, 2));
 
-        let _ = frame.rows_mut().count();
+        let _ = canvas.rows_mut().count();
 
-        assert_eq!(frame.dirty().count(), 6);
+        assert_eq!(canvas.delta().count(), 6);
     }
 }
